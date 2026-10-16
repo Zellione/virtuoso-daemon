@@ -83,9 +83,9 @@ class BatteryPoller:
     def run(self, *, max_samples=None):
         if max_samples is not None and max_samples < 1:
             raise ValueError("max_samples must be positive")
-    
+
         completed = 0
-    
+
         while max_samples is None or completed < max_samples:
             try:
                 level, reports = self.sample()
@@ -100,8 +100,8 @@ class BatteryPoller:
                     flush=True,
                 )
                 raise
-    
+
             completed += 1
-    
+
             if max_samples is None or completed < max_samples:
                 self.sleep(self.interval)
