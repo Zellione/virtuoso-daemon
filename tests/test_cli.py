@@ -258,11 +258,27 @@ def test_battery_watch_uses_single_connection(monkeypatch):
 
     cli.battery_watch()
 
+    from unittest.mock import ANY
+
     poller_factory.assert_called_once_with(
         device.device,
         interval=300,
+        notifier=ANY,
     )
-    poller.run.assert_called_once_with(max_samples=None)
+
+    notifier = poller_factory.call_args.kwargs["notifier"]
+    assert isinstance(notifier, cli.BatteryNotifier)
+
+    from unittest.mock import ANY
+
+    poller_factory.assert_called_once_with(
+        device.device,
+        interval=300,
+        notifier=ANY,
+    )
+
+    notifier = poller_factory.call_args.kwargs["notifier"]
+    assert isinstance(notifier, cli.BatteryNotifier)
     store.clear.assert_not_called()
     store.write.assert_not_called()
 
@@ -281,7 +297,7 @@ def test_battery_watch_reconnects_after_failure(monkeypatch):
         devices.append(context)
         return context
 
-    def make_poller(handle, *, interval):
+    def make_poller(handle, *, interval, notifier):
         poller = MagicMock()
 
         if not pollers:
@@ -474,3 +490,21 @@ def test_battery_watch_exponential_backoff(monkeypatch):
     assert attempts == 4
     assert delays == [15, 30, 60]
     poller.run.assert_called_once_with(max_samples=1)
+
+
+def test_charging_probe_dispatch(monkeypatch):
+    called = []
+
+    monkeypatch.setattr(
+        cli,
+        "charging_probe",
+        lambda: called.append(True),
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["virtuoso-daemon", "charging-probe"],
+    )
+
+    assert cli.main() == 0
+    assert called == [True]

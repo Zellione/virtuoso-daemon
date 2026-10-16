@@ -17,6 +17,9 @@ from .recovery import RecoveryStore
 from .session import SoftwareSession
 from .workflow import run_battery_workflow
 from .poller import BatteryPoller
+from .notifications import BatteryNotifier
+from .charging import read_charging_with_transport
+from .transport import HidTransport
 
 
 def send_command(device, endpoint, command, payload):
@@ -197,6 +200,7 @@ def battery_watch(*, interval=300, samples=None):
                     poller = BatteryPoller(
                         device.device,
                         interval=interval,
+                        notifier=BatteryNotifier(),
                     )
 
                     poller.run(max_samples=samples)
@@ -224,6 +228,26 @@ def battery_watch(*, interval=300, samples=None):
                 retry_interval = min(retry_interval * 2, retry_max)
 
 
+def charging_probe():
+    """Query charging state without entering software mode."""
+    with ControllerLock():
+        marker = RecoveryStore.default().read()
+
+        print(f"Recovery marker: {marker or 'none'}")
+
+        with VirtuosoDevice() as device:
+            transport = HidTransport(device.device)
+
+            state = read_charging_with_transport(transport)
+
+            if state is None:
+                print("Charging: unknown")
+            else:
+                print(
+                    "Charging: yes" if state else "Charging: no"
+                )
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -238,6 +262,7 @@ def main():
             "led-probe",
             "led-test",
             "battery-watch",
+            "charging-probe",
         ],
     )
 
@@ -276,6 +301,8 @@ def main():
                 interval=args.interval,
                 samples=args.samples,
             )
+        elif args.command == "charging-probe":
+            charging_probe()
 
     except KeyboardInterrupt:
         print("Virtuoso monitor stopped", flush=True)
