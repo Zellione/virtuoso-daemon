@@ -56,3 +56,60 @@ def test_brightness_scaling():
 def test_invalid_led_values(zone):
     with pytest.raises(LedError):
         zone.scaled()
+
+
+from virtuoso_daemon.led import probe_led_endpoint
+
+
+class FakeHid:
+    def __init__(self, written=None):
+        self.packets = []
+        self.written = written
+
+    def write(self, packet):
+        self.packets.append(packet)
+        return len(packet) if self.written is None else self.written
+
+
+def test_led_probe_sends_only_initialization():
+    device = FakeHid()
+
+    probe_led_endpoint(device)
+
+    assert device.packets == [build_led_init_packet()]
+    assert len(device.packets[0]) == 65
+
+
+def test_led_probe_rejects_short_write():
+    device = FakeHid(written=12)
+
+    with pytest.raises(RuntimeError, match="LED initialization"):
+        probe_led_endpoint(device)
+
+    assert len(device.packets) == 1
+
+
+from virtuoso_daemon.led import send_logo_off
+
+
+def test_logo_off_sends_expected_packets():
+    device = FakeHid()
+
+    send_logo_off(device)
+
+    assert len(device.packets) == 2
+    assert device.packets[0] == build_led_init_packet()
+    assert device.packets[1] == build_led_rgb_packet(
+        logo=LedZone(0, 0, 0),
+        battery=LedZone(0, 0, 0),
+        microphone=LedZone(255, 0, 0),
+    )
+
+
+def test_logo_off_stops_after_failed_initialization():
+    device = FakeHid(written=12)
+
+    with pytest.raises(RuntimeError, match="LED write failed"):
+        send_logo_off(device)
+
+    assert device.packets == [build_led_init_packet()]

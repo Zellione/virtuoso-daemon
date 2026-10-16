@@ -91,3 +91,35 @@ def build_led_rgb_packet(
     payload = bytes((0x00, 0x09, 0x00, 0x00, 0x00)) + rgb
 
     return _packet(0x06, payload)
+
+
+def probe_led_endpoint(handle) -> None:
+    """Send only the LED initialization report.
+
+    Does not request software mode or set RGB values.
+    """
+    packet = build_led_init_packet()
+    written = handle.write(packet)
+
+    if written != len(packet):
+        raise RuntimeError(
+            f"LED initialization write failed: {written}/{len(packet)}"
+        )
+
+
+def send_logo_off(handle) -> None:
+    """Experimental RGB test without requesting software mode."""
+    init_packet = build_led_init_packet()
+    rgb_packet = build_led_rgb_packet(
+        logo=LedZone(0, 0, 0),
+        battery=LedZone(0, 0, 0),
+        microphone=LedZone(255, 0, 0),
+    )
+
+    for packet in (init_packet, rgb_packet):
+        written = handle.write(packet)
+
+        if written != len(packet):
+            raise RuntimeError(
+                f"LED write failed: {written}/{len(packet)}"
+            )
