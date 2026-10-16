@@ -222,6 +222,7 @@ def test_cache_includes_charging_state(
 def test_minute_reminders_only_when_discharging(tmp_path):
     now = [0.0]
     notifier = MagicMock()
+    notifier.update.return_value = False
 
     poller = BatteryPoller(
         MagicMock(),
@@ -248,6 +249,7 @@ def test_minute_reminders_only_when_discharging(tmp_path):
 def test_reminders_stop_while_charging(tmp_path):
     now = [0.0]
     notifier = MagicMock()
+    notifier.update.return_value = False
 
     charging_reader = MagicMock(
         side_effect=[False, False, True, True, True]
@@ -294,3 +296,39 @@ def test_unknown_charging_suppresses_reminders(tmp_path):
 
     for call in notifier.remind.call_args_list:
         assert call.args == (9, None)
+
+
+def test_threshold_and_reminder_not_duplicated(tmp_path):
+    from virtuoso_daemon.notifications import BatteryNotifier
+
+    now = [1000.0]
+    sent = []
+
+    notifier = BatteryNotifier(
+        path=tmp_path / "notifications.json",
+        clock=lambda: now[0],
+        send=lambda level, urgency: sent.append(
+            (level, urgency)
+        ),
+    )
+
+    poller = BatteryPoller(
+        MagicMock(),
+        interval=30,
+        state_path=tmp_path / "battery.json",
+        battery_reader=MagicMock(return_value=10),
+        charging_reader=MagicMock(return_value=False),
+        notifier=notifier,
+        clock=lambda: now[0],
+        sleep=lambda seconds: now.__setitem__(
+            0, now[0] + seconds
+        ),
+    )
+
+    poller.run(max_samples=5)
+
+    assert sent == [
+        (10, "critical"),
+        (10, "critical"),
+        (10, "critical"),
+    ]

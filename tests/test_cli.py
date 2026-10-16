@@ -508,3 +508,21 @@ def test_charging_probe_dispatch(monkeypatch):
 
     assert cli.main() == 0
     assert called == [True]
+
+
+def test_notifications_test_cli_dispatch(monkeypatch):
+    called = []
+
+    monkeypatch.setattr(
+        cli,
+        "notifications_test",
+        lambda: called.append(True),
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["virtuoso-daemon", "notifications-test"],
+    )
+
+    assert cli.main() == 0
+    assert called == [True]

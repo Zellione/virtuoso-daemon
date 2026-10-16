@@ -79,6 +79,7 @@ class BatteryPoller:
     def sample(self):
         level = self.battery_reader(self.transport)
 
+        self.threshold_notified = False
         try:
             charging = self.charging_reader(self.transport)
         except Exception as exc:

@@ -5,6 +5,9 @@ import signal
 import sys
 import time
 
+from tempfile import TemporaryDirectory
+from pathlib import Path
+
 from .battery import BatteryError
 from .device import DeviceError
 from .transport import TransportOverflowError
@@ -248,6 +251,34 @@ def charging_probe():
                 )
 
 
+def notifications_test():
+    """Exercise Mako notifications without accessing HID hardware."""
+    with TemporaryDirectory(prefix="virtuoso-notify-test-") as directory:
+        notifier = BatteryNotifier(
+            path=Path(directory) / "notifications.json"
+        )
+
+        scenarios = [
+            ("Low battery threshold", "update", 20, None),
+            ("Minute reminder", "remind", 15, False),
+            ("Charging suppresses reminder", "remind", 15, True),
+            ("Critical battery threshold", "update", 10, None),
+        ]
+
+        for label, operation, level, charging in scenarios:
+            if operation == "update":
+                sent = notifier.update(level)
+            else:
+                sent = notifier.remind(level, charging)
+
+            print(
+                f"{label}: {'sent' if sent else 'suppressed'}",
+                flush=True,
+            )
+
+    print("Notification test completed")
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -263,6 +294,7 @@ def main():
             "led-test",
             "battery-watch",
             "charging-probe",
+            "notifications-test",
         ],
     )
 
@@ -303,6 +335,8 @@ def main():
             )
         elif args.command == "charging-probe":
             charging_probe()
+        elif args.command == "notifications-test":
+            notifications_test()
 
     except KeyboardInterrupt:
         print("Virtuoso monitor stopped", flush=True)

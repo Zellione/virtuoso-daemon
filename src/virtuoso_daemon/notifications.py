@@ -1,18 +1,22 @@
-"""Persistent low-battery notifications via the desktop notification system."""
+"""Persistent low-battery notifications via Mako."""
 
 import json
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 
 class BatteryNotifier:
-    def __init__(self, path=None, send=None):
+    COOLDOWN = 60
+
+    def __init__(self, path=None, send=None, clock=None):
         self.path = Path(path) if path is not None else (
             Path.home() / ".local/state/virtuoso-daemon/notifications.json"
         )
         self.send = send if send is not None else self._send
+        self.clock = clock if clock is not None else time.time
 
     @staticmethod
     def _send(level, urgency):
@@ -37,62 +41,119 @@ class BatteryNotifier:
         try:
             data = json.loads(self.path.read_text())
         except FileNotFoundError:
-            return "normal"
+            return {"state": "normal", "last_sent_at": None}
+
         if not isinstance(data, dict):
             raise ValueError("Invalid notification state")
-        state = data.get("state")
-        if state not in ("normal", "low", "critical"):
-            raise ValueError("Invalid notification state")
-        return state
 
-    def _write(self, state):
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd, name = tempfile.mkstemp(dir=self.path.parent)
+        if data.get("state") not in ("normal", "low", "critical"):
+            raise ValueError("Invalid notification state")
+
+        last = data.get("last_sent_at")
+        if last is not None and (
+            not isinstance(last, (int, float))
+            or isinstance(last, bool)
+        ):
+            raise ValueError("Invalid notification timestamp")
+
+        return {
+            "state": data["state"],
+            "last_sent_at": last,
+        }
+
+    def _write(self, data):
+        self.path.parent.mkdir(
+            parents=True, exist_ok=True, mode=0o700
+        )
+
+        fd, name = tempfile.mkstemp(
+            dir=self.path.parent,
+            prefix=".notifications-",
+        )
+
         try:
             with os.fdopen(fd, "w") as file:
-                json.dump({"state": state}, file)
+                json.dump(data, file)
                 file.write("\n")
                 file.flush()
                 os.fsync(file.fileno())
+
             os.replace(name, self.path)
         finally:
             if os.path.exists(name):
                 os.unlink(name)
 
-    def update(self, level):
-        if not isinstance(level, int) or not 0 <= level <= 100:
-            raise ValueError("Battery level must be 0..100")
+    def _ready(self, data):
+        last = data["last_sent_at"]
+        now = self.clock()
 
-        previous = self._read()
+        return (
+            last is None
+            or now - last >= self.COOLDOWN
+        )
 
-        if level <= 10:
-            current = "critical"
-        elif level <= 20:
-            current = "low"
-        elif level > 25:
-            current = "normal"
-        else:
-            current = previous
-
-        if current == previous:
+    def _notify(self, data, level, urgency, state):
+        if not self._ready(data):
             return False
 
-        if current == "critical":
-            self.send(level, "critical")
-        elif current == "low" and previous == "normal":
-            self.send(level, "normal")
+        self.send(level, urgency)
 
-        self._write(current)
-        return current in ("low", "critical")
+        self._write({
+            "state": state,
+            "last_sent_at": self.clock(),
+        })
+        return True
 
-    def remind(self, level: int, charging: bool | None) -> bool:
-        """Send a reminder only when discharge is confirmed."""
-        if not isinstance(level, int) or not 0 <= level <= 100:
+    @staticmethod
+    def _validate(level):
+        if (
+            type(level) is not int
+            or not 0 <= level <= 100
+        ):
             raise ValueError("Battery level must be 0..100")
+
+    def update(self, level):
+        self._validate(level)
+        data = self._read()
+        previous = data["state"]
+
+        if level > 25:
+            if previous != "normal":
+                self._write({
+                    **data,
+                    "state": "normal",
+                })
+            return False
+
+        if level <= 10:
+            if previous != "critical":
+                return self._notify(
+                    data, level, "critical", "critical"
+                )
+            return False
+
+        if level <= 20 and previous == "normal":
+            return self._notify(
+                data, level, "normal", "low"
+            )
+
+        return False
+
+    def remind(self, level, charging):
+        self._validate(level)
 
         if charging is not False or level > 15:
             return False
 
+        data = self._read()
         urgency = "critical" if level <= 10 else "normal"
-        self.send(level, urgency)
-        return True
+
+        return self._notify(
+            data,
+            level,
+            urgency,
+            "critical" if level <= 10 else (
+                "low" if data["state"] == "normal"
+                else data["state"]
+            ),
+        )
