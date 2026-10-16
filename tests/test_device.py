@@ -119,3 +119,43 @@ def test_close_failure_requires_recovery():
 
     assert device.state == DeviceState.RECOVERY_REQUIRED
     assert not device.connected
+
+
+def test_connection_failure_reports_probe_error(monkeypatch):
+    from unittest.mock import MagicMock
+    import pytest
+
+    from virtuoso_daemon import device as device_module
+    from virtuoso_daemon.device import DeviceError, VirtuosoDevice
+
+    monkeypatch.setattr(
+        device_module.hid,
+        "enumerate",
+        lambda vendor, product: [
+            {"interface_number": 4, "path": b"fake-interface"}
+        ],
+    )
+
+    handle = MagicMock()
+    handle.write.return_value = 65
+    handle.read.return_value = []
+
+    monkeypatch.setattr(
+        device_module.hid,
+        "device",
+        lambda: handle,
+    )
+    monkeypatch.setattr(
+        device_module.time,
+        "sleep",
+        lambda _: None,
+    )
+
+    with pytest.raises(
+        DeviceError,
+        match="Interface 4: firmware probe unanswered",
+    ):
+        with VirtuosoDevice():
+            pass
+
+    handle.close.assert_called_once()

@@ -307,7 +307,7 @@ def test_battery_watch_reconnects_after_failure(monkeypatch):
     assert len(devices) == 2
     assert len(pollers) == 2
 
-    sleep.assert_called_once_with(300)
+    sleep.assert_called_once_with(15)
 
     for context in devices:
         context.__exit__.assert_called_once()
@@ -383,7 +383,7 @@ def test_battery_watch_retries_initial_connection_failure(monkeypatch):
     cli.battery_watch(samples=1)
 
     assert attempts == 2
-    sleep.assert_called_once_with(300)
+    sleep.assert_called_once_with(15)
     poller.run.assert_called_once_with(max_samples=1)
 
 
@@ -408,7 +408,7 @@ def test_battery_watch_interrupts_during_retry(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         cli.battery_watch()
 
-    sleep.assert_called_once_with(300)
+    sleep.assert_called_once_with(15)
 
 
 def test_cli_keyboard_interrupt_exits_cleanly(monkeypatch):
@@ -427,3 +427,50 @@ def test_cli_keyboard_interrupt_exits_cleanly(monkeypatch):
     )
 
     assert cli.main() == 0
+
+
+def test_battery_watch_exponential_backoff(monkeypatch):
+    from unittest.mock import MagicMock
+    from virtuoso_daemon.device import DeviceError
+
+    attempts = 0
+    delays = []
+
+    def make_device():
+        nonlocal attempts
+        attempts += 1
+
+        context = MagicMock()
+
+        if attempts <= 3:
+            context.__enter__.side_effect = DeviceError(
+                "Connection unavailable"
+            )
+        else:
+            context.__enter__.return_value.interface = 4
+
+        return context
+
+    poller = MagicMock()
+
+    monkeypatch.setattr(cli, "VirtuosoDevice", make_device)
+    monkeypatch.setattr(
+        cli, "BatteryPoller", lambda *args, **kwargs: poller
+    )
+    monkeypatch.setattr(
+        cli, "ControllerLock", lambda: MagicMock()
+    )
+    monkeypatch.setattr(
+        cli.RecoveryStore,
+        "default",
+        lambda: MagicMock(read=lambda: None),
+    )
+    monkeypatch.setattr(
+        cli.time, "sleep", lambda seconds: delays.append(seconds)
+    )
+
+    cli.battery_watch(samples=1)
+
+    assert attempts == 4
+    assert delays == [15, 30, 60]
+    poller.run.assert_called_once_with(max_samples=1)

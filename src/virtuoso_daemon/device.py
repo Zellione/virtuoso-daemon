@@ -31,6 +31,7 @@ class VirtuosoDevice:
         self.device = None
         self.interface = None
         self.state = DeviceState.DISCONNECTED
+        self.last_connect_error = None
 
     @property
     def connected(self):
@@ -78,6 +79,7 @@ class VirtuosoDevice:
                 f"Invalid connection state: {self.state.name}"
             )
 
+        self.last_connect_error = None
         self.interface = None
 
         try:
@@ -103,6 +105,9 @@ class VirtuosoDevice:
                     handle.set_nonblocking(True)
 
                     if not self._probe(handle):
+                        self.last_connect_error = (
+                            f"Interface {interface}: firmware probe unanswered"
+                        )
                         continue
 
                     self.device = handle
@@ -112,8 +117,11 @@ class VirtuosoDevice:
                     handle = None
                     return True
 
-                except Exception:
-                    # Try the next candidate.
+                except Exception as exc:
+                    self.last_connect_error = (
+                        f"Interface {interface}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
                     continue
 
                 finally:
@@ -148,6 +156,11 @@ class VirtuosoDevice:
         if not self.connect():
             raise DeviceError(
                 "Corsair Virtuoso connection failed"
+                + (
+                    f": {self.last_connect_error}"
+                    if self.last_connect_error
+                    else ""
+                )
             )
 
         return self

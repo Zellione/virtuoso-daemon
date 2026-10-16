@@ -173,7 +173,8 @@ def led_test():
 def battery_watch(*, interval=300, samples=None):
     """Monitor battery with controlled HID reconnection."""
     store = RecoveryStore.default()
-    retry_interval = 300
+    retry_interval = 15
+    retry_max = 300
 
     with ControllerLock():
         marker = store.read()
@@ -220,6 +221,7 @@ def battery_watch(*, interval=300, samples=None):
                 )
 
                 time.sleep(retry_interval)
+                retry_interval = min(retry_interval * 2, retry_max)
 
 
 def main():
