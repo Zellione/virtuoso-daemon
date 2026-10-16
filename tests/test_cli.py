@@ -186,3 +186,81 @@ def test_battery_direct_cli_dispatch(monkeypatch):
 
     assert cli.main() == 0
     assert called == ["battery-direct"]
+
+
+def test_battery_watch_cli_dispatch(monkeypatch):
+    called = []
+
+    monkeypatch.setattr(
+        cli,
+        "battery_watch",
+        lambda **kwargs: called.append(kwargs),
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["virtuoso-daemon", "battery-watch"],
+    )
+
+    assert cli.main() == 0
+    assert called == [
+        {"interval": 300, "samples": None}
+    ]
+
+
+def test_battery_watch_cli_options(monkeypatch):
+    called = []
+
+    monkeypatch.setattr(
+        cli,
+        "battery_watch",
+        lambda **kwargs: called.append(kwargs),
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "virtuoso-daemon",
+            "battery-watch",
+            "--interval",
+            "30",
+            "--samples",
+            "3",
+        ],
+    )
+
+    assert cli.main() == 0
+    assert called == [
+        {"interval": 30.0, "samples": 3}
+    ]
+
+
+def test_battery_watch_uses_single_connection(monkeypatch):
+    from unittest.mock import MagicMock
+
+    device = MagicMock()
+    device.interface = 4
+
+    context = MagicMock()
+    context.__enter__.return_value = device
+
+    poller = MagicMock()
+    poller_factory = MagicMock(return_value=poller)
+
+    store = MagicMock()
+    store.read.return_value = "restore_commands_sent"
+
+    monkeypatch.setattr(cli, "VirtuosoDevice", lambda: context)
+    monkeypatch.setattr(cli, "ControllerLock", lambda: MagicMock())
+    monkeypatch.setattr(cli.RecoveryStore, "default", lambda: store)
+    monkeypatch.setattr(cli, "BatteryPoller", poller_factory)
+
+    cli.battery_watch()
+
+    poller_factory.assert_called_once_with(
+        device.device,
+        interval=300,
+    )
+    poller.run.assert_called_once_with(max_samples=None)
+    store.clear.assert_not_called()
+    store.write.assert_not_called()

@@ -13,6 +13,7 @@ from .protocol import build_packet
 from .recovery import RecoveryStore
 from .session import SoftwareSession
 from .workflow import run_battery_workflow
+from .poller import BatteryPoller
 
 
 def send_command(device, endpoint, command, payload):
@@ -166,6 +167,32 @@ def led_test():
         print("RGB commands sent; firmware state unverified")
 
 
+def battery_watch(*, interval=300, samples=None):
+    """Continuously monitor battery over one HID connection."""
+    store = RecoveryStore.default()
+
+    with ControllerLock():
+        marker = store.read()
+
+        if marker is not None:
+            print(
+                f"Existing recovery marker: {marker}",
+                flush=True,
+            )
+
+        with VirtuosoDevice() as device:
+            print(
+                f"Battery watch on HID interface {device.interface}",
+                flush=True,
+            )
+
+            poller = BatteryPoller(
+                device.device,
+                interval=interval,
+            )
+            poller.run(max_samples=samples)
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -179,7 +206,21 @@ def main():
             "battery-direct",
             "led-probe",
             "led-test",
+            "battery-watch",
         ],
+    )
+
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=300,
+        help="Battery polling interval in seconds",
+    )
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=None,
+        help="Stop after this many successful samples",
     )
 
     args = parser.parse_args()
@@ -199,6 +240,11 @@ def main():
             led_test()
         elif args.command == "battery-direct":
             battery_direct()
+        elif args.command == "battery-watch":
+            battery_watch(
+                interval=args.interval,
+                samples=args.samples,
+            )
 
     except BaseException as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
