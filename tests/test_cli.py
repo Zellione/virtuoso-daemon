@@ -1,5 +1,6 @@
 import pytest
 
+from virtuoso_daemon.battery import BatteryError
 from virtuoso_daemon import __main__ as cli
 from virtuoso_daemon.locking import ControllerLock, LockError
 from virtuoso_daemon.recovery import RecoveryStore
@@ -264,3 +265,165 @@ def test_battery_watch_uses_single_connection(monkeypatch):
     poller.run.assert_called_once_with(max_samples=None)
     store.clear.assert_not_called()
     store.write.assert_not_called()
+
+
+def test_battery_watch_reconnects_after_failure(monkeypatch):
+    from unittest.mock import MagicMock
+
+    devices = []
+    pollers = []
+
+    def make_device():
+        context = MagicMock()
+        device = MagicMock()
+        device.interface = 4
+        context.__enter__.return_value = device
+        devices.append(context)
+        return context
+
+    def make_poller(handle, *, interval):
+        poller = MagicMock()
+
+        if not pollers:
+            poller.run.side_effect = BatteryError(
+                "Device disconnected"
+            )
+
+        pollers.append(poller)
+        return poller
+
+    sleep = MagicMock()
+    store = MagicMock()
+    store.read.return_value = "restore_commands_sent"
+
+    monkeypatch.setattr(cli, "VirtuosoDevice", make_device)
+    monkeypatch.setattr(cli, "BatteryPoller", make_poller)
+    monkeypatch.setattr(cli, "ControllerLock", lambda: MagicMock())
+    monkeypatch.setattr(cli.RecoveryStore, "default", lambda: store)
+    monkeypatch.setattr(cli.time, "sleep", sleep)
+
+    cli.battery_watch(interval=30, samples=3)
+
+    assert len(devices) == 2
+    assert len(pollers) == 2
+
+    sleep.assert_called_once_with(300)
+
+    for context in devices:
+        context.__exit__.assert_called_once()
+
+    store.clear.assert_not_called()
+    store.write.assert_not_called()
+
+
+def test_battery_watch_does_not_retry_interrupt(monkeypatch):
+    from unittest.mock import MagicMock
+
+    context = MagicMock()
+    context.__enter__.return_value = MagicMock(interface=4)
+
+    poller = MagicMock()
+    poller.run.side_effect = KeyboardInterrupt
+
+    sleep = MagicMock()
+
+    monkeypatch.setattr(cli, "VirtuosoDevice", lambda: context)
+    monkeypatch.setattr(
+        cli, "BatteryPoller", lambda *a, **kw: poller
+    )
+    monkeypatch.setattr(cli, "ControllerLock", lambda: MagicMock())
+    monkeypatch.setattr(
+        cli.RecoveryStore, "default", lambda: MagicMock()
+    )
+    monkeypatch.setattr(cli.time, "sleep", sleep)
+
+    with pytest.raises(KeyboardInterrupt):
+        cli.battery_watch()
+
+    sleep.assert_not_called()
+    context.__exit__.assert_called_once()
+
+
+def test_battery_watch_retries_initial_connection_failure(monkeypatch):
+    from unittest.mock import MagicMock
+    from virtuoso_daemon.device import DeviceError
+
+    attempts = 0
+    poller = MagicMock()
+    sleep = MagicMock()
+
+    def make_device():
+        nonlocal attempts
+        attempts += 1
+
+        context = MagicMock()
+
+        if attempts == 1:
+            context.__enter__.side_effect = DeviceError(
+                "Headset unavailable"
+            )
+        else:
+            context.__enter__.return_value.device = MagicMock()
+            context.__enter__.return_value.interface = 4
+
+        return context
+
+    monkeypatch.setattr(cli, "VirtuosoDevice", make_device)
+    monkeypatch.setattr(
+        cli, "BatteryPoller", lambda *args, **kwargs: poller
+    )
+    monkeypatch.setattr(
+        cli, "ControllerLock", lambda: MagicMock()
+    )
+    monkeypatch.setattr(
+        cli.RecoveryStore, "default", lambda: MagicMock(read=lambda: None)
+    )
+    monkeypatch.setattr(cli.time, "sleep", sleep)
+
+    cli.battery_watch(samples=1)
+
+    assert attempts == 2
+    sleep.assert_called_once_with(300)
+    poller.run.assert_called_once_with(max_samples=1)
+
+
+def test_battery_watch_interrupts_during_retry(monkeypatch):
+    from unittest.mock import MagicMock
+    from virtuoso_daemon.device import DeviceError
+
+    context = MagicMock()
+    context.__enter__.side_effect = DeviceError("Disconnected")
+
+    sleep = MagicMock(side_effect=KeyboardInterrupt)
+
+    monkeypatch.setattr(cli, "VirtuosoDevice", lambda: context)
+    monkeypatch.setattr(
+        cli, "ControllerLock", lambda: MagicMock()
+    )
+    monkeypatch.setattr(
+        cli.RecoveryStore, "default", lambda: MagicMock(read=lambda: None)
+    )
+    monkeypatch.setattr(cli.time, "sleep", sleep)
+
+    with pytest.raises(KeyboardInterrupt):
+        cli.battery_watch()
+
+    sleep.assert_called_once_with(300)
+
+
+def test_cli_keyboard_interrupt_exits_cleanly(monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "battery_watch",
+        lambda **kwargs: (_ for _ in ()).throw(
+            KeyboardInterrupt()
+        ),
+    )
+
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["virtuoso-daemon", "battery-watch"],
+    )
+
+    assert cli.main() == 0

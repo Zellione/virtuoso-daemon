@@ -5,6 +5,9 @@ import signal
 import sys
 import time
 
+from .battery import BatteryError
+from .device import DeviceError
+from .transport import TransportOverflowError
 from .battery import read_battery
 from .device import VirtuosoDevice
 from .led import probe_led_endpoint, send_logo_off
@@ -168,8 +171,9 @@ def led_test():
 
 
 def battery_watch(*, interval=300, samples=None):
-    """Continuously monitor battery over one HID connection."""
+    """Monitor battery with controlled HID reconnection."""
     store = RecoveryStore.default()
+    retry_interval = 300
 
     with ControllerLock():
         marker = store.read()
@@ -180,17 +184,42 @@ def battery_watch(*, interval=300, samples=None):
                 flush=True,
             )
 
-        with VirtuosoDevice() as device:
-            print(
-                f"Battery watch on HID interface {device.interface}",
-                flush=True,
-            )
+        while True:
+            try:
+                with VirtuosoDevice() as device:
+                    print(
+                        f"Battery watch on HID interface "
+                        f"{device.interface}",
+                        flush=True,
+                    )
 
-            poller = BatteryPoller(
-                device.device,
-                interval=interval,
-            )
-            poller.run(max_samples=samples)
+                    poller = BatteryPoller(
+                        device.device,
+                        interval=interval,
+                    )
+
+                    poller.run(max_samples=samples)
+
+                # A completed run (for example --samples 3)
+                # is not a connection failure.
+                return
+
+            except (
+                DeviceError,
+                BatteryError,
+                TransportOverflowError,
+                OSError,
+            ) as exc:
+                print(
+                    f"Battery connection lost: {exc}",
+                    flush=True,
+                )
+                print(
+                    f"Retrying in {retry_interval} seconds",
+                    flush=True,
+                )
+
+                time.sleep(retry_interval)
 
 
 def main():
@@ -246,7 +275,11 @@ def main():
                 samples=args.samples,
             )
 
-    except BaseException as exc:
+    except KeyboardInterrupt:
+        print("Virtuoso monitor stopped", flush=True)
+        return 0
+
+    except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
