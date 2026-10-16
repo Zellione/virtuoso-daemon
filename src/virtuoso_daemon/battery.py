@@ -15,6 +15,27 @@ class BatteryError(RuntimeError):
     """Battery query failed."""
 
 
+def parse_battery_response(response) -> int | None:
+    """Parse a battery query reply.
+
+    Returns a percentage or None for unsupported or invalid data.
+    """
+    if not response or len(response) < 6:
+        return None
+
+    # V2W query replies use report type 0x01.
+    # Asynchronous notifications use a different structure.
+    if response[0] != 0x01:
+        return None
+
+    raw = (response[5] << 8) | response[4]
+
+    if not 1 <= raw <= 1000:
+        return None
+
+    return raw // 10
+
+
 def read_battery(handle, *, attempts=3):
     """Read battery percentage over an existing HID connection.
 
@@ -45,17 +66,12 @@ def read_battery(handle, *, attempts=3):
             time.sleep(0.05)
             response = handle.read(64)
 
-            if not response or len(response) < 6:
+            level = parse_battery_response(response)
+
+            if level is None:
                 continue
 
-            raw = (response[5] << 8) | response[4]
-
-            # Firmware reports battery level in tenths
-            # of a percent. Reject empty or stale values.
-            if not 1 <= raw <= 1000:
-                continue
-
-            valid.append(raw // 10)
+            valid.append(level)
             break
 
     if not valid:

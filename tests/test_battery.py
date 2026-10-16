@@ -52,3 +52,24 @@ def test_short_write():
 
     with pytest.raises(BatteryError, match="write failed"):
         read_battery(handle)
+
+
+import pytest
+
+from virtuoso_daemon.battery import parse_battery_response
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (bytes([0x01, 0, 0, 0, 0xF8, 0x02]), 76),
+        (bytes([0x01, 0, 0, 0, 0xE8, 0x03]), 100),
+        (bytes([0x01, 0, 0, 0, 0, 0]), None),
+        (bytes([0x01, 0, 0, 0, 0xE9, 0x03]), None),
+        (bytes([0x03, 1, 1, 0x0F, 0xF8, 0x02]), None),
+        (bytes([0x01, 0, 0]), None),
+        (b"", None),
+    ],
+)
+def test_parse_battery_response(response, expected):
+    assert parse_battery_response(response) == expected
