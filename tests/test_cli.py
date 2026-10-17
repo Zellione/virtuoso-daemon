@@ -445,7 +445,7 @@ def test_cli_keyboard_interrupt_exits_cleanly(monkeypatch):
     assert cli.main() == 0
 
 
-def test_battery_watch_exponential_backoff(monkeypatch):
+def test_battery_watch_initial_connection_retries(monkeypatch):
     from unittest.mock import MagicMock
     from virtuoso_daemon.device import DeviceError
 
@@ -488,8 +488,65 @@ def test_battery_watch_exponential_backoff(monkeypatch):
     cli.battery_watch(samples=1)
 
     assert attempts == 4
-    assert delays == [15, 30, 60]
+    assert delays == [15, 15, 15]
     poller.run.assert_called_once_with(max_samples=1)
+
+
+def test_battery_watch_resets_retry_after_success(monkeypatch):
+    from unittest.mock import MagicMock
+    from virtuoso_daemon.device import DeviceError
+
+    attempts = 0
+    delays = []
+
+    def make_device():
+        nonlocal attempts
+        attempts += 1
+        context = MagicMock()
+
+        if attempts <= 3:
+            context.__enter__.side_effect = DeviceError(
+                "Headset unavailable"
+            )
+        else:
+            context.__enter__.return_value.interface = 4
+
+        return context
+
+    pollers = []
+
+    def make_poller(*args, **kwargs):
+        poller = MagicMock()
+        poller.last_level = None
+
+        if not pollers:
+            poller.last_level = 50
+            poller.run.side_effect = BatteryError(
+                "Connection lost after sample"
+            )
+
+        pollers.append(poller)
+        return poller
+
+    monkeypatch.setattr(cli, "VirtuosoDevice", make_device)
+    monkeypatch.setattr(cli, "BatteryPoller", make_poller)
+    monkeypatch.setattr(cli, "ControllerLock", lambda: MagicMock())
+    monkeypatch.setattr(
+        cli.RecoveryStore,
+        "default",
+        lambda: MagicMock(read=lambda: None),
+    )
+    monkeypatch.setattr(
+        cli.time,
+        "sleep",
+        lambda seconds: delays.append(seconds),
+    )
+
+    cli.battery_watch(samples=1)
+
+    assert attempts == 5
+    assert delays == [15, 15, 15, 15]
+    assert len(pollers) == 2
 
 
 def test_charging_probe_dispatch(monkeypatch):

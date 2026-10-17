@@ -192,8 +192,13 @@ def battery_watch(*, interval=300, samples=None):
             )
 
         while True:
+            connected = False
+            poller = None
+
             try:
                 with VirtuosoDevice() as device:
+                    connected = True
+
                     print(
                         f"Battery watch on HID interface "
                         f"{device.interface}",
@@ -208,8 +213,6 @@ def battery_watch(*, interval=300, samples=None):
 
                     poller.run(max_samples=samples)
 
-                # A completed run (for example --samples 3)
-                # is not a connection failure.
                 return
 
             except (
@@ -222,13 +225,32 @@ def battery_watch(*, interval=300, samples=None):
                     f"Battery connection lost: {exc}",
                     flush=True,
                 )
+
+                # A successful battery sample proves that
+                # the connection recovered.
+                if (
+                    poller is not None
+                    and poller.last_level is not None
+                ):
+                    retry_interval = 15
+
+                if connected:
+                    delay = retry_interval
+                    retry_interval = min(
+                        retry_interval * 2,
+                        retry_max,
+                    )
+                else:
+                    # Receiver present, headset may be off.
+                    delay = 15
+                    retry_interval = 15
+
                 print(
-                    f"Retrying in {retry_interval} seconds",
+                    f"Retrying in {delay} seconds",
                     flush=True,
                 )
 
-                time.sleep(retry_interval)
-                retry_interval = min(retry_interval * 2, retry_max)
+                time.sleep(delay)
 
 
 def charging_probe():
